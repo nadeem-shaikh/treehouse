@@ -96,16 +96,19 @@ func getRunE(cmd *cobra.Command, args []string) error {
 		// detached HEAD discards them permanently.
 		ok, promptErr := ui.Confirm("Clean worktree and return to pool?", unmerged == 0)
 		if promptErr != nil || !ok {
-			if dirty {
+			switch {
+			case dirty && unmerged > 0:
+				fmt.Fprintln(os.Stderr, "🌳 Worktree left as-is (uncommitted changes and unmerged commits). Use 'treehouse return --force' to discard them.")
+			case dirty:
 				fmt.Fprintln(os.Stderr, "🌳 Worktree left dirty. Use 'treehouse return --force' to clean it later.")
-			} else {
+			default:
 				fmt.Fprintln(os.Stderr, "🌳 Worktree left with unmerged commits. Use 'treehouse return --force' to discard them.")
 			}
 			return nil
 		}
 	}
 
-	if !killLingeringProcesses(wtPath) {
+	if !killLingeringProcesses(wtPath, true) {
 		return nil
 	}
 
@@ -143,10 +146,11 @@ func getLeaseRunE(repoRoot, poolDir string, cfg config.Config) error {
 // killLingeringProcesses terminates any process whose cwd is within the given
 // worktree, so detached tools (e.g. opencode servers that ignore SIGHUP) don't
 // keep holding the worktree after it returns to the pool. It previews the
-// targeted processes first and, when stdin is interactive, asks for
-// confirmation before terminating. It returns false when the user declines,
-// signalling the caller to leave the worktree as-is instead of returning it.
-func killLingeringProcesses(wtPath string) bool {
+// targeted processes first and, when confirm is set and stdin is interactive,
+// asks before terminating; confirm is false for forced returns so they never
+// prompt. It returns false when the user declines, signalling the caller to
+// leave the worktree as-is instead of returning it.
+func killLingeringProcesses(wtPath string, confirm bool) bool {
 	procs, err := process.FindTerminableWorktreeProcesses(wtPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "🌳 Warning: failed to scan for lingering processes: %v\n", err)
@@ -162,7 +166,7 @@ func killLingeringProcesses(wtPath string) bool {
 	}
 	fmt.Fprintf(os.Stderr, "🌳 Lingering processes in this worktree: %s\n", strings.Join(names, ", "))
 
-	if ui.IsInteractive() {
+	if confirm && ui.IsInteractive() {
 		ok, promptErr := ui.Confirm("Terminate these processes?", true)
 		if promptErr != nil || !ok {
 			fmt.Fprintln(os.Stderr, "🌳 Left processes running; worktree not returned.")

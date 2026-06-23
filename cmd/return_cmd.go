@@ -52,14 +52,19 @@ var returnCmd = &cobra.Command{
 					return nil
 				}
 			}
+		}
 
+		// Preview lingering processes and, unless forced, confirm before
+		// terminating. Done before DetachWorktree so declining is a clean no-op
+		// that leaves the worktree (and any lease) untouched.
+		if !killLingeringProcesses(wtPath, !returnForce) {
+			return nil
+		}
+
+		if !returnForce {
 			if err := git.DetachWorktree(wtPath); err != nil {
 				return fmt.Errorf("failed to detach worktree HEAD: %w", err)
 			}
-		}
-
-		if !killLingeringProcesses(wtPath) {
-			return nil
 		}
 
 		if err := pool.Release(poolDir, wtPath); err != nil {

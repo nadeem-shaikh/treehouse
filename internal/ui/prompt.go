@@ -7,6 +7,10 @@ import (
 	"strings"
 )
 
+// stdinReader is shared across Confirm calls so that one prompt's buffered
+// read-ahead is not lost when a later prompt runs in the same invocation.
+var stdinReader = bufio.NewReader(os.Stdin)
+
 // IsInteractive reports whether standard input is connected to a terminal, so
 // callers can decide whether prompting the user for confirmation makes sense.
 func IsInteractive() bool {
@@ -25,8 +29,7 @@ func Confirm(message string, defaultYes bool) (bool, error) {
 
 	fmt.Fprintf(os.Stderr, "%s [%s] ", message, hint)
 
-	reader := bufio.NewReader(os.Stdin)
-	input, err := reader.ReadString('\n')
+	input, err := stdinReader.ReadString('\n')
 	if err != nil {
 		return defaultYes, err
 	}
