@@ -7,6 +7,16 @@ import (
 	"strings"
 )
 
+// IsInteractive reports whether standard input is connected to a terminal, so
+// callers can decide whether prompting the user for confirmation makes sense.
+func IsInteractive() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
 func Confirm(message string, defaultYes bool) (bool, error) {
 	hint := "Y/n"
 	if !defaultYes {

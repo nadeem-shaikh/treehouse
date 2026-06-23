@@ -58,7 +58,9 @@ var returnCmd = &cobra.Command{
 			}
 		}
 
-		killLingeringProcesses(wtPath)
+		if !killLingeringProcesses(wtPath) {
+			return nil
+		}
 
 		if err := pool.Release(poolDir, wtPath); err != nil {
 			return fmt.Errorf("failed to return worktree: %w", err)

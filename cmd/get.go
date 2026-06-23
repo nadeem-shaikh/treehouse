@@ -105,7 +105,9 @@ func getRunE(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	killLingeringProcesses(wtPath)
+	if !killLingeringProcesses(wtPath) {
+		return nil
+	}
 
 	if err := pool.Release(poolDir, wtPath); err != nil {
 		fmt.Fprintf(os.Stderr, "🌳 Warning: failed to clean worktree: %v\n", err)
@@ -139,20 +141,36 @@ func getLeaseRunE(repoRoot, poolDir string, cfg config.Config) error {
 }
 
 // killLingeringProcesses terminates any process whose cwd is within the given
-// worktree. Called before returning a worktree to the pool so detached tools
-// (e.g. opencode servers that ignore SIGHUP) don't keep holding the worktree.
-func killLingeringProcesses(wtPath string) {
-	killed, err := process.TerminateWorktreeProcesses(wtPath, 2*time.Second)
+// worktree, so detached tools (e.g. opencode servers that ignore SIGHUP) don't
+// keep holding the worktree after it returns to the pool. It previews the
+// targeted processes first and, when stdin is interactive, asks for
+// confirmation before terminating. It returns false when the user declines,
+// signalling the caller to leave the worktree as-is instead of returning it.
+func killLingeringProcesses(wtPath string) bool {
+	procs, err := process.FindTerminableWorktreeProcesses(wtPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "🌳 Warning: failed to scan for lingering processes: %v\n", err)
-		return
+		return true
 	}
-	if len(killed) == 0 {
-		return
+	if len(procs) == 0 {
+		return true
 	}
-	names := make([]string, len(killed))
-	for i, p := range killed {
+
+	names := make([]string, len(procs))
+	for i, p := range procs {
 		names[i] = p.String()
 	}
+	fmt.Fprintf(os.Stderr, "🌳 Lingering processes in this worktree: %s\n", strings.Join(names, ", "))
+
+	if ui.IsInteractive() {
+		ok, promptErr := ui.Confirm("Terminate these processes?", true)
+		if promptErr != nil || !ok {
+			fmt.Fprintln(os.Stderr, "🌳 Left processes running; worktree not returned.")
+			return false
+		}
+	}
+
+	process.TerminateProcesses(procs, 2*time.Second)
 	fmt.Fprintf(os.Stderr, "🌳 Terminated lingering processes: %s\n", strings.Join(names, ", "))
+	return true
 }

@@ -7,23 +7,26 @@ import (
 	gopsutilprocess "github.com/shirou/gopsutil/v4/process"
 )
 
-// TerminateWorktreeProcesses finds every process whose cwd is within the given
-// worktree path and terminates them.
-//
-// On unix it sends SIGTERM, waits up to gracePeriod for processes to exit,
-// then SIGKILLs any survivors. On windows it uses TerminateProcess.
-//
-// Returns the list of processes that were targeted. Errors only if the initial
-// scan fails; individual kill failures (e.g. process already gone) are
-// swallowed.
-func TerminateWorktreeProcesses(worktreePath string, gracePeriod time.Duration) ([]ProcessInfo, error) {
+// FindTerminableWorktreeProcesses returns the processes that
+// TerminateWorktreeProcesses would target: those whose cwd is within the
+// worktree, excluding the current process and its ancestors (so a caller
+// running inside the worktree never targets its own process chain). Finding does
+// not signal anything, so callers can preview or confirm before terminating.
+func FindTerminableWorktreeProcesses(worktreePath string) ([]ProcessInfo, error) {
 	procs, err := FindProcessesInWorktree(worktreePath)
 	if err != nil {
 		return nil, err
 	}
-	procs = filterProtectedProcesses(procs, int32(os.Getpid()), parentPID)
+	return filterProtectedProcesses(procs, int32(os.Getpid()), parentPID), nil
+}
+
+// TerminateProcesses terminates the given processes. On unix it sends SIGTERM,
+// waits up to gracePeriod for them to exit, then SIGKILLs any survivors. On
+// windows it uses TerminateProcess. Individual kill failures (e.g. a process
+// already gone) are swallowed.
+func TerminateProcesses(procs []ProcessInfo, gracePeriod time.Duration) {
 	if len(procs) == 0 {
-		return nil, nil
+		return
 	}
 
 	pids := make([]int32, len(procs))
@@ -32,6 +35,20 @@ func TerminateWorktreeProcesses(worktreePath string, gracePeriod time.Duration) 
 	}
 
 	terminate(pids, gracePeriod)
+}
+
+// TerminateWorktreeProcesses finds every process whose cwd is within the given
+// worktree path (excluding the caller's own process chain) and terminates them.
+//
+// Returns the list of processes that were targeted. Errors only if the initial
+// scan fails; individual kill failures (e.g. process already gone) are
+// swallowed.
+func TerminateWorktreeProcesses(worktreePath string, gracePeriod time.Duration) ([]ProcessInfo, error) {
+	procs, err := FindTerminableWorktreeProcesses(worktreePath)
+	if err != nil {
+		return nil, err
+	}
+	TerminateProcesses(procs, gracePeriod)
 	return procs, nil
 }
 
