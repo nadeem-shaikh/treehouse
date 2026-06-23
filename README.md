@@ -169,6 +169,16 @@ The default treehouse root is `~/.treehouse/`.
 | `destroy` | `--force` | Force destroy even if in-use or leased |
 | `destroy` | `--all`   | Destroy all worktrees in the pool |
 
+### Returning a worktree safely
+
+When a `get` subshell exits — or you run `treehouse return` — treehouse resets the worktree to the default branch before returning it to the pool. Because worktrees run in detached HEAD, that reset is destructive, so treehouse checks three things first and prompts before discarding anything:
+
+- **Uncommitted changes** — a dirty working tree is reported and you are asked to confirm before it is cleaned.
+- **Unmerged commits** — commits on the detached HEAD that are not reachable from the default branch would be lost by the reset. treehouse warns with the count and defaults the prompt to **no**, so committed work is not silently discarded.
+- **Lingering processes** — any process whose working directory is inside the worktree is listed before it is terminated, and in an interactive terminal you are asked to confirm. (Your own shell and its ancestors are never targeted.)
+
+Pass `treehouse return --force` to skip every prompt and clean, reset, and return unconditionally. In a non-interactive context (no terminal on stdin) treehouse never blocks on a prompt: a worktree with uncommitted changes or unmerged commits is left as-is (use `--force` to clean it), while lingering-process termination still proceeds so scripted and agent returns are not blocked.
+
 ### Leasing a worktree (no subshell)
 
 `treehouse get` normally opens an interactive subshell whose lifetime is the hold: when the shell exits, the worktree returns to the pool.
