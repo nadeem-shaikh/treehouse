@@ -36,8 +36,17 @@ var returnCmd = &cobra.Command{
 
 		if !returnForce {
 			dirty, _ := git.IsDirty(wtPath)
-			if dirty {
-				ok, err := ui.Confirm("Worktree has uncommitted changes. Clean and return?", true)
+			unmerged, _ := git.UnmergedCommitCount(wtPath)
+			if dirty || unmerged > 0 {
+				if dirty {
+					fmt.Fprintln(os.Stderr, "🌳 Worktree has uncommitted changes.")
+				}
+				if unmerged > 0 {
+					fmt.Fprintf(os.Stderr, "🌳 Worktree has %d unmerged %s that would be discarded.\n", unmerged, plural("commit", unmerged))
+				}
+
+				// Default to keeping the worktree when commits would be lost.
+				ok, err := ui.Confirm("Clean and return to pool?", unmerged == 0)
 				if err != nil || !ok {
 					fmt.Fprintln(os.Stderr, "🌳 Aborted.")
 					return nil

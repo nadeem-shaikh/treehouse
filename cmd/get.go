@@ -83,12 +83,24 @@ func getRunE(cmd *cobra.Command, args []string) error {
 	}
 
 	dirty, _ := git.IsDirty(wtPath)
-	if dirty {
-		fmt.Fprintf(os.Stderr, "🌳 Worktree has uncommitted changes.\n")
+	unmerged, _ := git.UnmergedCommitCount(wtPath)
+	if dirty || unmerged > 0 {
+		if dirty {
+			fmt.Fprintln(os.Stderr, "🌳 Worktree has uncommitted changes.")
+		}
+		if unmerged > 0 {
+			fmt.Fprintf(os.Stderr, "🌳 Worktree has %d unmerged %s that would be discarded.\n", unmerged, plural("commit", unmerged))
+		}
 
-		ok, promptErr := ui.Confirm("Clean worktree and return to pool?", true)
+		// Default to keeping the worktree when commits would be lost: resetting a
+		// detached HEAD discards them permanently.
+		ok, promptErr := ui.Confirm("Clean worktree and return to pool?", unmerged == 0)
 		if promptErr != nil || !ok {
-			fmt.Fprintln(os.Stderr, "🌳 Worktree left dirty. Use 'treehouse return --force' to clean it later.")
+			if dirty {
+				fmt.Fprintln(os.Stderr, "🌳 Worktree left dirty. Use 'treehouse return --force' to clean it later.")
+			} else {
+				fmt.Fprintln(os.Stderr, "🌳 Worktree left with unmerged commits. Use 'treehouse return --force' to discard them.")
+			}
 			return nil
 		}
 	}
