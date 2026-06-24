@@ -3,6 +3,19 @@ set -e
 
 REPO="kunchenguid/treehouse"
 
+# Print the SHA-256 of a file using whichever tool is available
+# (sha256sum on Linux, shasum on macOS).
+sha256_hash() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    echo "Error: need sha256sum or shasum to verify the download" >&2
+    return 1
+  fi
+}
+
 # Prefer ~/.local/bin if it exists and is in PATH (no sudo needed).
 # Fall back to /usr/local/bin otherwise.
 if echo "$PATH" | tr ':' '\n' | grep -qx "$HOME/.local/bin"; then
@@ -40,6 +53,24 @@ trap 'rm -rf "$TMPDIR"' EXIT
 
 echo "Downloading treehouse ${VERSION} for ${OS}/${ARCH}..."
 curl -fsSL "$URL" -o "${TMPDIR}/${FILENAME}"
+
+# Verify the SHA-256 checksum against the published checksums.txt before
+# extracting, matching the integrity check the in-app updater performs.
+echo "Verifying checksum..."
+curl -fsSL "https://github.com/${REPO}/releases/download/${VERSION}/checksums.txt" -o "${TMPDIR}/checksums.txt"
+EXPECTED="$(awk -v f="$FILENAME" '$2 == f {print $1}' "${TMPDIR}/checksums.txt")"
+if [ -z "$EXPECTED" ]; then
+  echo "No checksum found for ${FILENAME} in checksums.txt"
+  exit 1
+fi
+ACTUAL="$(sha256_hash "${TMPDIR}/${FILENAME}")"
+if [ "$EXPECTED" != "$ACTUAL" ]; then
+  echo "Checksum verification failed for ${FILENAME}"
+  echo "  expected: ${EXPECTED}"
+  echo "  actual:   ${ACTUAL}"
+  exit 1
+fi
+
 tar xzf "${TMPDIR}/${FILENAME}" -C "$TMPDIR"
 
 if [ -w "$INSTALL_DIR" ]; then

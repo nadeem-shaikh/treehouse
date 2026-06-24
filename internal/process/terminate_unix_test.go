@@ -53,6 +53,46 @@ func TestTerminateWorktreeProcesses_KillsProcessInWorktree(t *testing.T) {
 	}
 }
 
+func TestFindThenTerminateWorktreeProcess(t *testing.T) {
+	dir := t.TempDir()
+
+	cmd := exec.Command("sleep", "60")
+	cmd.Dir = dir
+	if err := cmd.Start(); err != nil {
+		t.Skipf("cannot start sleep: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+
+	time.Sleep(200 * time.Millisecond)
+
+	procs, err := FindTerminableWorktreeProcesses(dir)
+	if err != nil {
+		t.Fatalf("FindTerminableWorktreeProcesses: %v", err)
+	}
+	if len(procs) == 0 {
+		t.Fatal("expected to find the lingering process")
+	}
+
+	// Finding must not signal anything: the process stays alive until
+	// TerminateProcesses runs, which is what makes a preview/confirm safe.
+	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatalf("expected process alive after find, signal err: %v", err)
+	}
+
+	TerminateProcesses(procs, 2*time.Second)
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("process was not terminated within 5s")
+	}
+}
+
 func TestTerminateWorktreeProcesses_EscalatesToKill(t *testing.T) {
 	dir := t.TempDir()
 

@@ -16,6 +16,30 @@ $tmpDir = New-TemporaryFile | ForEach-Object { Remove-Item $_; New-Item -ItemTyp
 
 Write-Host "Downloading treehouse $version for windows/$arch..."
 Invoke-WebRequest -Uri $url -OutFile "$tmpDir\$filename"
+
+# Verify the SHA-256 checksum against the published checksums.txt before
+# extracting, matching the integrity check the in-app updater performs.
+Write-Host "Verifying checksum..."
+$checksumsFile = "$tmpDir\checksums.txt"
+Invoke-WebRequest -Uri "https://github.com/$repo/releases/download/$version/checksums.txt" -OutFile $checksumsFile
+
+$expected = $null
+foreach ($line in Get-Content $checksumsFile) {
+    $fields = $line -split '\s+', 2
+    if ($fields.Count -eq 2 -and $fields[1].Trim() -eq $filename) {
+        $expected = $fields[0].Trim().ToLower()
+        break
+    }
+}
+if (-not $expected) {
+    throw "No checksum found for $filename in checksums.txt"
+}
+
+$actual = (Get-FileHash -Algorithm SHA256 -Path "$tmpDir\$filename").Hash.ToLower()
+if ($actual -ne $expected) {
+    throw "Checksum verification failed for $filename`n  expected: $expected`n  actual:   $actual"
+}
+
 Expand-Archive -Path "$tmpDir\$filename" -DestinationPath $tmpDir -Force
 
 New-Item -ItemType Directory -Path $installDir -Force | Out-Null

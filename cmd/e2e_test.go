@@ -14,6 +14,7 @@ var (
 	treehouseBin      string
 	exitShellBin      string
 	dirtyMainShellBin string
+	commitShellBin    string
 )
 
 func TestMain(m *testing.M) {
@@ -98,6 +99,52 @@ func main() {
 	buildDirtyMainShell.Stderr = os.Stderr
 	if err := buildDirtyMainShell.Run(); err != nil {
 		panic("failed to build dirty-main-shell: " + err.Error())
+	}
+
+	// commit-shell commits a file on the worktree's detached HEAD, simulating an
+	// agent that commits its work before exiting.
+	commitShellBin = filepath.Join(buildDir, "commit-shell")
+	if runtime.GOOS == "windows" {
+		commitShellBin += ".exe"
+	}
+	commitSrcDir := filepath.Join(buildDir, "commit-shell-src")
+	if err := os.MkdirAll(commitSrcDir, 0o755); err != nil {
+		panic(err)
+	}
+	if err := os.WriteFile(filepath.Join(commitSrcDir, "go.mod"), []byte("module commit-shell\n\ngo 1.21\n"), 0o644); err != nil {
+		panic(err)
+	}
+	if err := os.WriteFile(filepath.Join(commitSrcDir, "main.go"), []byte(`package main
+
+import (
+	"os"
+	"os/exec"
+)
+
+func run(name string, args ...string) {
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		os.Exit(1)
+	}
+}
+
+func main() {
+	if err := os.WriteFile("agent-work.txt", []byte("work\n"), 0o644); err != nil {
+		os.Exit(1)
+	}
+	run("git", "add", "agent-work.txt")
+	run("git", "commit", "-m", "agent work")
+}
+`), 0o644); err != nil {
+		panic(err)
+	}
+	buildCommitShell := exec.Command("go", "build", "-o", commitShellBin, ".")
+	buildCommitShell.Dir = commitSrcDir
+	buildCommitShell.Stderr = os.Stderr
+	if err := buildCommitShell.Run(); err != nil {
+		panic("failed to build commit-shell: " + err.Error())
 	}
 
 	code := m.Run()
@@ -726,6 +773,39 @@ func TestGetDetachesWorktreeWhenLeavingDirty(t *testing.T) {
 	}
 	if out, err := gitCmdResult(t, repoDir, "checkout", "main"); err != nil {
 		t.Fatalf("expected main repo to checkout main after dirty worktree exit, got: %v\n%s", err, out)
+	}
+}
+
+func TestGetKeepsUnmergedCommitsOnExit(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+
+	// The subshell commits work on the detached HEAD, then exits.
+	env := []string{"SHELL=" + commitShellBin}
+	_, getErr, code := runTreehouse(t, repoDir, homeDir, env, "get")
+	if code != 0 {
+		t.Fatalf("get failed (code %d): %s", code, getErr)
+	}
+	wtPath := extractWorktreePath(getErr, homeDir)
+	if wtPath == "" {
+		t.Fatal("could not extract worktree path")
+	}
+
+	if !strings.Contains(getErr, "unmerged commit") {
+		t.Fatalf("expected unmerged-commit warning, got: %s", getErr)
+	}
+	if !strings.Contains(getErr, "Worktree left with unmerged commits") {
+		t.Fatalf("expected worktree to be kept for review, got: %s", getErr)
+	}
+	if strings.Contains(getErr, "Worktree returned to pool") {
+		t.Fatalf("worktree with unmerged commits must not be returned: %s", getErr)
+	}
+
+	// The agent's commit must survive: not reset away.
+	if _, err := os.Stat(filepath.Join(wtPath, "agent-work.txt")); err != nil {
+		t.Fatalf("expected agent commit to be preserved in worktree: %v", err)
+	}
+	if subject := gitCmd(t, wtPath, "log", "-1", "--pretty=%s"); subject != "agent work" {
+		t.Fatalf("expected HEAD to be the agent commit, got %q", subject)
 	}
 }
 

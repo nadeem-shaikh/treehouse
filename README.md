@@ -169,6 +169,16 @@ The default treehouse root is `~/.treehouse/`.
 | `destroy` | `--force` | Force destroy even if in-use or leased |
 | `destroy` | `--all`   | Destroy all worktrees in the pool |
 
+### Returning a worktree safely
+
+When a `get` subshell exits — or you run `treehouse return` — treehouse resets the worktree to the default branch before returning it to the pool. Because worktrees run in detached HEAD, that reset is destructive, so treehouse checks three things first and prompts before discarding anything:
+
+- **Uncommitted changes** — a dirty working tree is reported and you are asked to confirm before it is cleaned.
+- **Unmerged commits** — commits on the detached HEAD that are not reachable from the default branch would be lost by the reset. treehouse warns with the count and defaults the prompt to **no**, so committed work is not silently discarded.
+- **Lingering processes** — any process whose working directory is inside the worktree is listed before it is terminated, and in an interactive terminal you are asked to confirm. (Your own shell and its ancestors are never targeted.)
+
+Pass `treehouse return --force` to skip every prompt and clean, reset, and return unconditionally. In a non-interactive context (no terminal on stdin) treehouse never blocks on a prompt: a worktree with uncommitted changes or unmerged commits is left as-is (use `--force` to clean it), while lingering-process termination still proceeds so scripted and agent returns are not blocked.
+
 ### Leasing a worktree (no subshell)
 
 `treehouse get` normally opens an interactive subshell whose lifetime is the hold: when the shell exits, the worktree returns to the pool.
@@ -190,6 +200,23 @@ Pass `--lease-holder <label>` (or set `$TREEHOUSE_LEASE_HOLDER`) to record who h
 
 Release a lease with `treehouse return <path>`, which clears the lease, terminates any lingering processes, resets the worktree, and returns it to the pool.
 When you pass an explicit path, `treehouse return` can run from outside the repository because it resolves the managed pool from that worktree path.
+
+### Autonomous / multi-agent usage
+
+Treehouse is built to back parallel AI-agent sessions on one repository: each agent gets an isolated worktree (separate working tree, index, and HEAD), and concurrent `get` calls are serialized by a per-pool file lock, so the same worktree is never handed to two agents.
+
+For orchestration, prefer `get --lease` over the interactive subshell. A leased worktree is reserved durably — it survives with no process inside and is never handed out or pruned until you release it — which makes it a stable home for an agent:
+
+```sh
+# Orchestrator, per agent:
+path=$(treehouse get --lease --lease-holder "agent-$i")
+# ...run the agent in "$path"; it commits AND pushes its own branch...
+treehouse return --force "$path"   # recycle once the work is safely pushed
+```
+
+The rule to follow: **save each agent's work durably before its worktree is recycled.** Worktrees use detached HEAD, so an agent's commits live only on that HEAD, and returning a worktree resets it to the default branch (`git reset --hard`), discarding them. Have each agent push to its own remote branch — detached HEAD avoids branch-name collisions between agents, but it is not durable storage. A non-`--force` `return` will not silently throw work away (it prompts, and in a non-interactive context aborts rather than reset); once the work is pushed, `return --force` is the deliberate "recycle now" path.
+
+Set `max_trees` to at least the number of concurrent agents, or `get` fails once the pool is full. Treehouse does not coordinate git between agents: give each agent a distinct branch, and stagger very large fan-outs so the initial `git fetch` calls don't all contend at once.
 
 ### Pruning stale worktrees and orphans
 

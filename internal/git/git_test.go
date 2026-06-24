@@ -101,6 +101,50 @@ func TestRemoveCleanWorktreeRejectsDirtyWorktree(t *testing.T) {
 	}
 }
 
+func TestUnmergedCommitCount(t *testing.T) {
+	base := t.TempDir()
+	repoDir := filepath.Join(base, "repo")
+	wtPath := filepath.Join(base, "worktree")
+
+	mustGit(t, "", "init", "--initial-branch=main", repoDir)
+	mustGit(t, repoDir, "config", "user.email", "test@test.com")
+	mustGit(t, repoDir, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, repoDir, "add", ".")
+	mustGit(t, repoDir, "commit", "-m", "initial")
+	mustGit(t, repoDir, "worktree", "add", "--detach", wtPath, "main")
+
+	// A fresh detached worktree sits on the default branch: nothing unmerged.
+	count, err := UnmergedCommitCount(wtPath)
+	if err != nil {
+		t.Fatalf("UnmergedCommitCount failed: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected 0 unmerged commits, got %d", count)
+	}
+
+	// Two commits on the detached HEAD are not reachable from main.
+	if err := os.WriteFile(filepath.Join(wtPath, "work.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, wtPath, "add", ".")
+	mustGit(t, wtPath, "commit", "-m", "work 1")
+	if err := os.WriteFile(filepath.Join(wtPath, "work.txt"), []byte("two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, wtPath, "commit", "-am", "work 2")
+
+	count, err = UnmergedCommitCount(wtPath)
+	if err != nil {
+		t.Fatalf("UnmergedCommitCount failed: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("expected 2 unmerged commits, got %d", count)
+	}
+}
+
 func mustGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)

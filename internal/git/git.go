@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -269,6 +270,29 @@ func IsHeadMergedIntoRef(worktreePath, ref string) (bool, error) {
 		return false, nil
 	}
 	return false, fmt.Errorf("git merge-base --is-ancestor HEAD %s: %s", ref, strings.TrimSpace(string(out)))
+}
+
+// UnmergedCommitCount returns how many commits reachable from the worktree's
+// HEAD are not reachable from the ref that ResetWorktree resets to (whichever of
+// the local or remote default branch is further ahead). These are exactly the
+// commits that returning the worktree to the pool would permanently discard, so
+// it is 0 when HEAD is already contained in that ref. It relies only on local
+// refs, so it still reports correctly when origin is unreachable.
+func UnmergedCommitCount(worktreePath string) (int, error) {
+	branch, err := GetDefaultBranch(worktreePath)
+	if err != nil {
+		return 0, err
+	}
+	ref := branchRef(worktreePath, branch)
+	out, err := runGit(worktreePath, "rev-list", "--count", ref+"..HEAD")
+	if err != nil {
+		return 0, err
+	}
+	n, err := strconv.Atoi(out)
+	if err != nil {
+		return 0, fmt.Errorf("parsing unmerged commit count %q: %w", out, err)
+	}
+	return n, nil
 }
 
 // IsDirty reports tracked or untracked changes, ignoring status.showUntrackedFiles.
