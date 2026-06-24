@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/mattn/go-isatty"
 )
 
 // stdinReader is shared across Confirm calls so that one prompt's buffered
@@ -13,12 +15,12 @@ var stdinReader = bufio.NewReader(os.Stdin)
 
 // IsInteractive reports whether standard input is connected to a terminal, so
 // callers can decide whether prompting the user for confirmation makes sense.
+// It uses a real terminal check rather than a character-device test, so
+// non-interactive stdin such as /dev/null (itself a character device) is
+// correctly treated as non-interactive.
 func IsInteractive() bool {
-	fi, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
+	fd := os.Stdin.Fd()
+	return isatty.IsTerminal(fd) || isatty.IsCygwinTerminal(fd)
 }
 
 func Confirm(message string, defaultYes bool) (bool, error) {

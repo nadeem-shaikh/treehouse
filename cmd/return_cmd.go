@@ -35,8 +35,14 @@ var returnCmd = &cobra.Command{
 		}
 
 		if !returnForce {
-			dirty, _ := git.IsDirty(wtPath)
-			unmerged, _ := git.UnmergedCommitCount(wtPath)
+			dirty, err := git.IsDirty(wtPath)
+			if err != nil {
+				return fmt.Errorf("failed to check for uncommitted changes: %w", err)
+			}
+			unmerged, err := git.UnmergedCommitCount(wtPath)
+			if err != nil {
+				return fmt.Errorf("failed to count unmerged commits: %w", err)
+			}
 			if dirty || unmerged > 0 {
 				if dirty {
 					fmt.Fprintln(os.Stderr, "🌳 Worktree has uncommitted changes.")
@@ -45,6 +51,12 @@ var returnCmd = &cobra.Command{
 					fmt.Fprintf(os.Stderr, "🌳 Worktree has %d unmerged %s that would be discarded.\n", unmerged, plural("commit", unmerged))
 				}
 
+				// Non-interactively, never prompt (and never block): leave the
+				// worktree as-is so work is never discarded without consent.
+				if !ui.IsInteractive() {
+					fmt.Fprintln(os.Stderr, "🌳 Worktree left as-is (non-interactive stdin). Use 'treehouse return --force' to discard.")
+					return nil
+				}
 				// Default to keeping the worktree when commits would be lost.
 				ok, err := ui.Confirm("Clean and return to pool?", unmerged == 0)
 				if err != nil || !ok {

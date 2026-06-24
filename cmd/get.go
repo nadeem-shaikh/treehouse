@@ -82,8 +82,14 @@ func getRunE(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "🌳 Warning: failed to detach worktree HEAD: %v\n", err)
 	}
 
-	dirty, _ := git.IsDirty(wtPath)
-	unmerged, _ := git.UnmergedCommitCount(wtPath)
+	dirty, dirtyErr := git.IsDirty(wtPath)
+	unmerged, unmergedErr := git.UnmergedCommitCount(wtPath)
+	if dirtyErr != nil || unmergedErr != nil {
+		// Fail safe: if we can't reliably tell whether work would be lost, keep
+		// the worktree rather than resetting it.
+		fmt.Fprintf(os.Stderr, "🌳 Worktree left as-is: couldn't verify safety (dirty=%v, unmerged=%v). Use 'treehouse return --force' to clean it.\n", dirtyErr, unmergedErr)
+		return nil
+	}
 	if dirty || unmerged > 0 {
 		if dirty {
 			fmt.Fprintln(os.Stderr, "🌳 Worktree has uncommitted changes.")
@@ -92,10 +98,16 @@ func getRunE(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(os.Stderr, "🌳 Worktree has %d unmerged %s that would be discarded.\n", unmerged, plural("commit", unmerged))
 		}
 
-		// Default to keeping the worktree when commits would be lost: resetting a
-		// detached HEAD discards them permanently.
-		ok, promptErr := ui.Confirm("Clean worktree and return to pool?", unmerged == 0)
-		if promptErr != nil || !ok {
+		// Keep the worktree unless the user explicitly confirms a clean + return.
+		// Non-interactively we never prompt (and never block): leave it as-is.
+		proceed := false
+		if ui.IsInteractive() {
+			// Default to keeping the worktree when commits would be lost:
+			// resetting a detached HEAD discards them permanently.
+			ok, promptErr := ui.Confirm("Clean worktree and return to pool?", unmerged == 0)
+			proceed = promptErr == nil && ok
+		}
+		if !proceed {
 			switch {
 			case dirty && unmerged > 0:
 				fmt.Fprintln(os.Stderr, "🌳 Worktree left as-is (uncommitted changes and unmerged commits). Use 'treehouse return --force' to discard them.")
