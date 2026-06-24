@@ -201,6 +201,23 @@ Pass `--lease-holder <label>` (or set `$TREEHOUSE_LEASE_HOLDER`) to record who h
 Release a lease with `treehouse return <path>`, which clears the lease, terminates any lingering processes, resets the worktree, and returns it to the pool.
 When you pass an explicit path, `treehouse return` can run from outside the repository because it resolves the managed pool from that worktree path.
 
+### Autonomous / multi-agent usage
+
+Treehouse is built to back parallel AI-agent sessions on one repository: each agent gets an isolated worktree (separate working tree, index, and HEAD), and concurrent `get` calls are serialized by a per-pool file lock, so the same worktree is never handed to two agents.
+
+For orchestration, prefer `get --lease` over the interactive subshell. A leased worktree is reserved durably — it survives with no process inside and is never handed out or pruned until you release it — which makes it a stable home for an agent:
+
+```sh
+# Orchestrator, per agent:
+path=$(treehouse get --lease --lease-holder "agent-$i")
+# ...run the agent in "$path"; it commits AND pushes its own branch...
+treehouse return --force "$path"   # recycle once the work is safely pushed
+```
+
+The rule to follow: **save each agent's work durably before its worktree is recycled.** Worktrees use detached HEAD, so an agent's commits live only on that HEAD, and returning a worktree resets it to the default branch (`git reset --hard`), discarding them. Have each agent push to its own remote branch — detached HEAD avoids branch-name collisions between agents, but it is not durable storage. A non-`--force` `return` will not silently throw work away (it prompts, and in a non-interactive context aborts rather than reset); once the work is pushed, `return --force` is the deliberate "recycle now" path.
+
+Set `max_trees` to at least the number of concurrent agents, or `get` fails once the pool is full. Treehouse does not coordinate git between agents: give each agent a distinct branch, and stagger very large fan-outs so the initial `git fetch` calls don't all contend at once.
+
 ### Pruning stale worktrees and orphans
 
 `treehouse prune` is a dry run by default.
